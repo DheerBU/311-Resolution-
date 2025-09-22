@@ -8,7 +8,7 @@ I will build an end-to-end pipeline that predicts how long a Boston 311 service 
 
 My primary goal is to train a regression model that predicts time-to-close at request creation with a mean absolute error of 24 hours or less on a held-out temporal test set. A complementary goal is to explain the main drivers of resolution time so that the results are interpretable and useful to stakeholders.
 
-## Data Collection and how I will collect it
+## Data Collection
 
 I will collect Boston 311 service request records (open/close timestamps, case ID, category/reason/type, short text subject/description, source channel, latitude/longitude, neighborhood) from the City of Boston Open Data portal via the Socrata API, pulling data in monthly batches and saving raw snapshots (CSV/Parquet). I will gather weather observations (hourly/daily temperature, precipitation, snow, wind) for the same periods from a programmatic source such as Meteostat or NOAA and cache them locally. I will add spatial context by downloading Boston neighborhood polygons (GeoJSON/Shapefile) and performing point-in-polygon joins. I will derive calendar features (holiday flags, weekday/weekend, month/season) directly from timestamps using a Python holidays utility.
 

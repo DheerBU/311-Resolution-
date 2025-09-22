@@ -4,7 +4,7 @@
 
 I will build an end-to-end pipeline that predicts how long a Boston 311 service request will take to close, measured in hours from creation to closure. My workflow will cover data collection, cleaning, feature extraction, visualization, and model training, with the final outcome being accurate, interpretable predictions and supporting analyses.
 
-## Clear goal
+## Goal
 
 My primary goal is to train a regression model that predicts time-to-close at request creation with a mean absolute error of 24 hours or less on a held-out temporal test set. A complementary goal is to explain the main drivers of resolution time so that the results are interpretable and useful to stakeholders.
 

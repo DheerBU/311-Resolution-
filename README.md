@@ -1,5 +1,7 @@
 ## Midterm Progress Report — Predicting Resolution Time for Boston 311 Requests
 
+Video Presentation: https://youtu.be/SFe9qG2eDk8
+
 ### 1. Introduction
 
 This project aims to predict how long a Boston 311 service request will take to close, measured in hours from its creation timestamp. The broader goal is to provide actionable insights that can help both residents (by setting more realistic expectations) and the city’s operations teams (by identifying potential service bottlenecks). The final objective is to achieve a mean absolute error (MAE) of ≤24 hours on a held-out temporal test set. This midterm report documents the current state of the pipeline, including preprocessing, initial modeling, exploratory data analysis, and baseline results.

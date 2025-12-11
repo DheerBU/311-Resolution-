@@ -1,3 +1,5 @@
+
+
 # Final Report — Predicting Resolution Time for Boston 311 Requests
 
 Video Presentation: **
@@ -54,15 +56,33 @@ The GitHub Actions workflow executes the same tests automatically on every push.
 
 ### 311 Service Request Data
 
-Raw files (CSV) for **2018–2025** were downloaded from the City of Boston’s open data portal. Relevant fields include timestamps, category/reason/type, location coordinates, neighborhood, and source channel.
+All raw Boston 311 service request data used in this project (2018–2025) can be downloaded publicly at:
+
+**[https://data.boston.gov/dataset/311-service-requests](https://data.boston.gov/dataset/311-service-requests)**
+
+Because full-year CSVs exceed GitHub’s file size limit, they are **not stored in this repository**. The pipeline expects these files to be placed in the `data/` directory following the naming convention:
+
+```
+data/
+  Service Requests - 2018.csv
+  Service Requests - 2019.csv
+  ...
+  Service Requests - 2025.csv
+```
 
 ### Weather Data
 
-Hourly weather observations for 2018–2025 were collected and merged on the hour of request creation. Weather variables included temperature, precipitation, humidity, wind, and related atmospheric attributes.
+Hourly weather data for 2018–2025 is already included in the repository under:
+
+```
+data/boston_hourly_2018_2025.csv
+```
+
+These observations are merged into the pipeline on the hour of request creation to incorporate temperature, precipitation, humidity, wind, and related variables.
 
 ### Spatial Data
 
-A simple proxy for spatial context was computed as the distance between the request coordinates and Boston City Hall, expressed in kilometers.
+Spatial context is captured algorithmically from the latitude/longitude values in the 311 dataset, including distance to City Hall.
 
 ### Directory Layout
 
@@ -70,8 +90,7 @@ A simple proxy for spatial context was computed as the distance between the requ
 CS506-proj/
 │
 ├── data/
-│   ├── 311_2018.csv
-│   ├── ...
+│   ├── (Your 311 CSVs here)
 │   └── boston_hourly_2018_2025.csv
 │
 ├── report/
@@ -107,18 +126,18 @@ CS506-proj/
 * **Workload proxy:** 7-day rolling average of recent request volume.
 * **Holiday flag:** derived using the `holidays` Python package.
 * **Spatial proxy:** approximate distance to City Hall in kilometers.
-* **Weather features:** temperature, precipitation, snow, wind, humidity (merged by hour).
-* **Text features:** TF-IDF of the request subject (disabled for the main run due to scale).
+* **Weather features:** temperature, precipitation, snow, wind, humidity.
+* **Text features:** TF-IDF of the request subject (disabled for the main run).
 
 ### Exploratory Visualizations
 
 The pipeline automatically generates:
 
-* Distribution of resolution times (clipped).
-* Box plots for the top request reasons.
-* Monthly trend in median resolution time from 2018–2025.
+* Resolution time distribution
+* Box plots by top request reasons
+* Monthly median trends from 2018–2025
 
-These plots help confirm skew, seasonal behavior, and category-level variation.
+These summaries confirm skew, seasonal patterns, and category-level variation.
 
 ---
 
@@ -132,21 +151,19 @@ These plots help confirm skew, seasonal behavior, and category-level variation.
 
 ### Target Variable
 
-The model predicts a transformed target:
+The model predicts on the transformed target:
 
 ```
 log1p(winsorized_duration_hours)
 ```
 
-Predictions are inverted with `expm1` and clipped at the train 99th percentile.
+Predictions are converted back using `expm1` and clipped at the train 99th percentile.
 
 ### Models Trained
 
 * **RidgeCV** – linear baseline
-* **LassoCV** – sparse linear baseline
-* **HistGradientBoostingRegressor (HGBR)** – nonlinear tree-based final model
-
-Categorical variables were one-hot encoded, numeric variables were passed through a median imputer, and optional text features were handled via TF-IDF.
+* **LassoCV** – sparse linear model
+* **HistGradientBoostingRegressor (HGBR)** – final nonlinear model
 
 ---
 
@@ -161,44 +178,41 @@ Categorical variables were one-hot encoded, numeric variables were passed throug
 | HGBR    | Val 2023       | 305.23    | 1192.61    | 11.61           |
 |         | Test 2024–2025 | 127.95    | 467.02     | 7.19            |
 
-The **HGBR** model performs the best overall, providing both strong accuracy and interpretability. Although the MAE remains above the original 24-hour target, the median absolute error is consistently around **7 hours**, showing strong performance for the majority of requests. Long-tail outliers dominate the MAE.
+The HGBR model performs the best overall, delivering strong accuracy and capturing nonlinear patterns across time, weather, spatial variation, and categories.
 
 ---
 
 ## 7. Interpretability and Diagnostics
 
-The interpretability module generates:
-
 ### Permutation Feature Importance
 
-Reveals the most influential predictors, including:
+Ranks signal strength across:
 
 * request category
-* rolling request volume
+* workload volume
 * weather variables
-* day of week and hour of day
+* day and hour effects
 * neighborhood
-* spatial distance
+* distance from City Hall
 
 ### Partial Dependence Plots
 
-Show how predicted duration changes with:
+Show how predictions change with:
 
-* time of day
+* open hour
+* day of week
 * request volume
 * temperature and precipitation
-* holidays
+* holiday effects
 * spatial distance
 
 ### Residual Diagnostics
 
-Residual plots highlight:
+Residuals reveal:
 
-* nonlinear patterns captured by HGBR
-* higher errors in certain categories (e.g., Trees, Street Lights)
-* heteroskedasticity driven by long-duration requests
-
-All interpretability outputs are saved in `report/figures/`.
+* good central accuracy (median error ~7 hours)
+* error concentration in long-duration categories
+* nonlinear structure well-captured by HGBR
 
 ---
 
@@ -208,4 +222,4 @@ The analysis shows that Boston 311 resolution times are heavily right-skewed, wi
 
 Spatial and operational factors further shape resolution times. Neighborhood differences and distance from central areas introduce logistical complexity, while the 7-day rolling request volume provides a strong indicator of workload pressure, with higher volumes correlating with slower closures. Nonlinear modeling (HGBR) captures these interactions more effectively than linear baselines, producing lower median errors and more stable performance across temporal splits. Although the overall MAE remains above the 24-hour target because of persistent long-tail outliers, the median error of around seven hours demonstrates that the model predicts the majority of requests accurately, and that remaining error is concentrated in specific operationally complex categories rather than due to random model failures.
 
----
+

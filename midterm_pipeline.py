@@ -19,10 +19,10 @@ from sklearn.inspection import permutation_importance
 import holidays
 
 # -----------------------------
-# Config (PATHS + toggles)
+# Config
 # -----------------------------
-DATA_DIR = "/Users/dheerdoshi/Documents/CS506-proj/data"            # CSVs (2018–2025) here
-FIG_DIR  = "/Users/dheerdoshi/Documents/CS506-proj/report/figures"  # figures saved here
+DATA_DIR = "/Users/dheerdoshi/Documents/CS506-proj/data"
+FIG_DIR  = "/Users/dheerdoshi/Documents/CS506-proj/report/figures"
 os.makedirs(FIG_DIR, exist_ok=True)
 REPORT_DIR = os.path.dirname(FIG_DIR)
 os.makedirs(REPORT_DIR, exist_ok=True)
@@ -31,20 +31,16 @@ YEARS_TO_USE = list(range(2018, 2026))
 VAL_YEAR     = 2023
 TEST_YEARS   = [2024, 2025]
 
-# Hourly weather columns actually present in boston_hourly_2018_2025.csv
 WEATHER_COLS = ["temp", "dwpt", "rhum", "prcp", "wspd", "wdir", "pres"]
 
-# Feature toggles
-USE_TEXT      = False    # enable TF-IDF on subject when ready
-USE_WEATHER   = True     # set True once weather_df is wired
+USE_TEXT      = False
+USE_WEATHER   = True
 USE_HOLIDAYS  = True
 USE_SPATIAL   = True
 
-# Model toggles
-FAST_MODE     = False       # if True: simple Ridge baseline only; if False: try CV + HGBR
-PRED_CAP_PCT  = 0.99        # clip predictions at train 99th percentile to avoid blow-ups
+FAST_MODE     = False
+PRED_CAP_PCT  = 0.99
 
-# Expected column names
 COL_OPEN   = "open_dt"
 COL_CLOSE  = "closed_dt"
 COL_ID     = "case_id"
@@ -56,15 +52,11 @@ COL_LAT    = "latitude"
 COL_LON    = "longitude"
 COL_NHOOD  = "neighborhood"
 
-# Spatial reference (rough City Hall location)
 CITY_HALL_LAT, CITY_HALL_LON = 42.3601, -71.0589
-
-# Holidays
 US_HOLIDAYS = holidays.US()
 
-# For collecting experiment logs and fitted models
 EXP_RESULTS = []
-SAVED_MODELS = {}  # store fitted pipelines by model name
+SAVED_MODELS = {}
 
 # -----------------------------
 # Utils
@@ -86,25 +78,20 @@ def load_year_csvs(data_dir, years):
 def basic_clean(df):
     df.columns = [c.strip().lower() for c in df.columns]
 
-    # parse datetimes
     for c in [COL_OPEN, COL_CLOSE]:
         if c in df.columns:
             df[c] = pd.to_datetime(df[c], errors="coerce", utc=True)
 
-    # ensure subject has no NaNs for TF-IDF
     if COL_SUBJ in df.columns:
         df[COL_SUBJ] = df[COL_SUBJ].fillna("")
 
-    # drop invalid timestamps and negative durations
     df = df.dropna(subset=[COL_OPEN, COL_CLOSE]).copy()
     df["duration_hours"] = (df[COL_CLOSE] - df[COL_OPEN]).dt.total_seconds() / 3600.0
     df = df[(df["duration_hours"] >= 0) & np.isfinite(df["duration_hours"])]
 
-    # dedupe by case_id if present
     if COL_ID in df.columns:
         df = df.sort_values([COL_ID, COL_OPEN]).drop_duplicates(subset=[COL_ID], keep="first")
 
-    # validate lat/lon (optional; keep NaN if outside)
     if all(c in df.columns for c in [COL_LAT, COL_LON]):
         df[COL_LAT] = pd.to_numeric(df[COL_LAT], errors="coerce")
         df[COL_LON] = pd.to_numeric(df[COL_LON], errors="coerce")
@@ -114,28 +101,24 @@ def basic_clean(df):
         )
         df.loc[~good_geo, [COL_LAT, COL_LON]] = np.nan
 
-        # simple spatial proxy: distance to City Hall (approx, in km)
         if USE_SPATIAL:
             df["dist_city_hall_km"] = np.sqrt(
                 (df[COL_LAT] - CITY_HALL_LAT) ** 2 +
                 (df[COL_LON] - CITY_HALL_LON) ** 2
-            ) * 111.0  # degrees → km rough factor
+            ) * 111.0
 
-    # temporal features
     df["open_year"]  = df[COL_OPEN].dt.year
     df["open_month"] = df[COL_OPEN].dt.month
-    df["open_dow"]   = df[COL_OPEN].dt.dayofweek  # 0=Mon
+    df["open_dow"]   = df[COL_OPEN].dt.dayofweek
     df["open_hour"]  = df[COL_OPEN].dt.hour
     df["is_weekend"] = df["open_dow"].isin([5, 6]).astype(int)
     df["open_date"]  = df[COL_OPEN].dt.floor("D")
 
-    # winsorize 99th pct for label
     cap = df["duration_hours"].quantile(0.99)
     df["duration_hours_winsor"] = np.clip(df["duration_hours"], 0, cap)
     return df
 
 def add_simple_rolling_volume(df):
-    """Approx recent workload: 7-day rolling mean of daily volume."""
     tmp = df[["open_date"]].copy()
     daily = tmp.groupby("open_date").size().rename("daily_volume").to_frame()
     daily["daily_vol_roll7"] = daily["daily_volume"].rolling(7, min_periods=1).mean()
@@ -148,28 +131,22 @@ def add_holiday_flag(df):
     return df
 
 def load_weather():
-    path = os.path.join(DATA_DIR, "boston_hourly_2018_2025.csv")  # adjust filename if needed
+    path = os.path.join(DATA_DIR, "boston_hourly_2018_2025.csv")
     w = pd.read_csv(path, low_memory=False)
 
-    # Meteostat-style: 'time' is the timestamp column
     if "time" in w.columns:
         w["timestamp"] = pd.to_datetime(w["time"], utc=True)
         w = w.drop(columns=["time"])
     elif "date" in w.columns:
-        # fallback if file uses 'date'
         w["timestamp"] = pd.to_datetime(w["date"], utc=True)
         w = w.drop(columns=["date"])
 
-    # keep only timestamp + weather vars
     keep = ["timestamp"] + [c for c in WEATHER_COLS if c in w.columns]
     w = w[keep]
-
     return w
 
 def merge_weather(df, weather_df):
     df = df.copy()
-
-    # floor request time to the hour
     df["open_hour_floor"] = df[COL_OPEN].dt.floor("H")
 
     w = weather_df.copy()
@@ -178,7 +155,6 @@ def merge_weather(df, weather_df):
 
     df = df.merge(w, on="open_hour_floor", how="left")
     df.drop(columns=["open_hour_floor"], inplace=True)
-
     return df
 
 def temporal_splits(df):
@@ -226,7 +202,7 @@ def save_predictions_df(model_name, split_name, df_split, y_true_w, y_pred):
     out.to_csv(os.path.join(REPORT_DIR, fname), index=False)
 
 # -----------------------------
-# EDA (Preliminary Visualizations)
+# EDA
 # -----------------------------
 def plot_duration_hist(df):
     plt.figure()
@@ -274,7 +250,6 @@ class ToDenseTransformer(BaseEstimator, TransformerMixin):
         return self
 
     def transform(self, X):
-        # If X is sparse, convert to dense; otherwise return as is
         if hasattr(X, "toarray"):
             return X.toarray()
         return X
@@ -283,18 +258,10 @@ class ToDenseTransformer(BaseEstimator, TransformerMixin):
 # Interpretability helpers
 # -----------------------------
 def get_feature_names_from_preprocessor(pre):
-    """
-    Build a flat list of feature names from a fitted ColumnTransformer.
-    Works with:
-      - 'cat' transformer: Pipeline(imputer, OneHotEncoder)
-      - 'num' transformer: Pipeline(imputer)
-      - optional text transformer (not used in final config)
-    """
     feature_names = []
 
     for name, transformer, cols in pre.transformers_:
         if name == "cat":
-            # pipeline: imputer -> ohe
             ohe = transformer.named_steps.get("ohe", None)
             if ohe is not None:
                 ohe_names = ohe.get_feature_names_out(cols)
@@ -302,7 +269,6 @@ def get_feature_names_from_preprocessor(pre):
         elif name == "num":
             feature_names.extend(list(cols))
         elif name == "txt":
-            # if ever enabled
             tfidf = transformer
             if isinstance(transformer, Pipeline):
                 tfidf = transformer.named_steps.get("tfidf", None)
@@ -313,20 +279,14 @@ def get_feature_names_from_preprocessor(pre):
     return feature_names
 
 def plot_feature_importance_hgbr(pipe, train, top_n=20, sample_size=50000):
-    """
-    Compute permutation importances for HGBR on the transformed feature space
-    and plot the top-N features.
-    """
     pre   = pipe.named_steps["pre"]
     model = pipe.named_steps["model"]
 
-    # sample train rows for speed
     if len(train) > sample_size:
         train_sample = train.sample(sample_size, random_state=42).copy()
     else:
         train_sample = train.copy()
 
-    # transform to model input space
     X = pre.transform(train_sample)
     if hasattr(X, "toarray"):
         X = X.toarray()
@@ -360,12 +320,6 @@ def plot_feature_importance_hgbr(pipe, train, top_n=20, sample_size=50000):
     plt.close()
 
 def plot_manual_pdp(pipe, df, feature, n_points=20, sample_size=20000):
-    """
-    Approximate partial dependence by:
-      - sampling rows from df
-      - sweeping feature over a grid
-      - predicting and averaging.
-    """
     if feature not in df.columns:
         return
 
@@ -385,7 +339,7 @@ def plot_manual_pdp(pipe, df, feature, n_points=20, sample_size=20000):
     for v in grid:
         df_tmp = df_sample.copy()
         df_tmp[feature] = v
-        preds = np.expm1(pipe.predict(df_tmp))  # log1p → hours
+        preds = np.expm1(pipe.predict(df_tmp))
         mean_preds.append(preds.mean())
 
     plt.figure()
@@ -400,13 +354,11 @@ def plot_manual_pdp(pipe, df, feature, n_points=20, sample_size=20000):
     plt.close()
 
 def run_pdp_suite(pipe, train):
-    """Run PDP-like plots for a few key features."""
     for feat in ["open_hour", "open_dow", "daily_vol_roll7", "is_weekend"]:
         if feat in train.columns:
             plot_manual_pdp(pipe, train, feat)
 
 def plot_residual_diagnostics(pipe, test, split_name="test"):
-    """Create residual hist and true vs pred scatter for a given split."""
     y_true = test["duration_hours_winsor"].values
     y_pred = np.expm1(pipe.predict(test))
 
@@ -416,7 +368,6 @@ def plot_residual_diagnostics(pipe, test, split_name="test"):
 
     residuals = y_true_clip - y_pred_clip
 
-    # Residual histogram
     plt.figure()
     plt.hist(residuals, bins=60)
     plt.xlabel("Residual (true - pred) hours")
@@ -427,7 +378,6 @@ def plot_residual_diagnostics(pipe, test, split_name="test"):
     plt.savefig(out_path, dpi=160)
     plt.close()
 
-    # True vs predicted scatter (sample)
     n = len(y_true_clip)
     max_points = 40000
     if n > max_points:
@@ -449,10 +399,6 @@ def plot_residual_diagnostics(pipe, test, split_name="test"):
     plt.close()
 
 def run_interpretability(train, test):
-    """
-    Run feature importance, PDP-style plots, and residual diagnostics
-    for the final HGBR model (if trained).
-    """
     if "HGBR" not in SAVED_MODELS:
         print("No HGBR model found in SAVED_MODELS; skipping interpretability.")
         return
@@ -469,7 +415,6 @@ def run_interpretability(train, test):
 # Features / Modeling
 # -----------------------------
 def build_feature_pipeline(df):
-    # robust OHE constructor (backward compatible)
     def make_ohe():
         try:
             return OneHotEncoder(handle_unknown="ignore", min_frequency=50)
@@ -490,7 +435,6 @@ def build_feature_pipeline(df):
     if USE_SPATIAL and "dist_city_hall_km" in df.columns:
         num_base.append("dist_city_hall_km")
 
-    # add weather columns if present and enabled
     if USE_WEATHER:
         for col in WEATHER_COLS:
             if col in df.columns:
@@ -525,7 +469,6 @@ def build_feature_pipeline(df):
     return ColumnTransformer(transformers, remainder="drop", sparse_threshold=0.3)
 
 def fit_and_eval(train, val, test):
-    # train on log1p of winsorized duration
     y_train_w = train["duration_hours_winsor"].values
     y_val_w   = val["duration_hours_winsor"].values
     y_tst_w   = test["duration_hours_winsor"].values
@@ -548,7 +491,6 @@ def fit_and_eval(train, val, test):
             ),
         }
 
-    # cap predictions to avoid numerical explosions
     pred_cap = train["duration_hours"].quantile(PRED_CAP_PCT)
 
     for name, model in model_dict.items():
@@ -565,7 +507,7 @@ def fit_and_eval(train, val, test):
             ])
 
         pipe.fit(train, y_train_log)
-        SAVED_MODELS[name] = pipe  # save for later interpretability
+        SAVED_MODELS[name] = pipe
 
         pred_val_log  = pipe.predict(val)
         pred_test_log = pipe.predict(test)
@@ -633,10 +575,8 @@ def main():
     print("Fitting models and reporting results…")
     fit_and_eval(train, val, test)
 
-    # interpretability for HGBR
     run_interpretability(train, test)
 
-    # save experiment log
     if EXP_RESULTS:
         exp_path = os.path.join(REPORT_DIR, "experiment_results.csv")
         pd.DataFrame(EXP_RESULTS).to_csv(exp_path, index=False)
